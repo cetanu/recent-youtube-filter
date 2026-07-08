@@ -1,0 +1,45 @@
+name: Build release XPI
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-xpi:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Read extension version
+        id: version
+        run: |
+          VERSION="$(node -p "require('./manifest.json').version")"
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build XPI
+        run: |
+          mkdir -p dist
+          zip -r "dist/recent-youtube-filter-${{ steps.version.outputs.version }}.xpi" manifest.json src
+
+      - name: Upload XPI to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          XPI_PATH: dist/recent-youtube-filter-${{ steps.version.outputs.version }}.xpi
+        run: |
+          gh release upload "${RELEASE_TAG}" "${XPI_PATH}" --clobber
+
+      - name: Upload workflow artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: recent-youtube-filter-${{ steps.version.outputs.version }}.xpi
+          path: dist/recent-youtube-filter-${{ steps.version.outputs.version }}.xpi
