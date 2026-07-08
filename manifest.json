@@ -1,13 +1,8 @@
 {
   "manifest_version": 2,
   "name": "Recent YouTube Filter",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Removes YouTube feed videos that were posted more than a configured number of days ago.",
-  "data_collection_permissions": {
-    "required": [
-      "none"
-    ]
-  },
   "permissions": [
     "storage",
     "*://www.youtube.com/*"
@@ -30,7 +25,12 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "recent-youtube-filter@example.local",
-      "strict_min_version": "109.0"
+      "strict_min_version": "109.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
     }
   }
 }
