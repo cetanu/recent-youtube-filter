@@ -21,6 +21,18 @@ label {
   gap: 8px;
 }
 
+.checkbox-row {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+  font-weight: 400;
+}
+
+.checkbox-row input {
+  width: auto;
+  margin-top: 3px;
+}
+
 input {
   width: 8rem;
 }

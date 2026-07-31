@@ -1,16 +1,52 @@
 const DEFAULT_MAX_AGE_DAYS = 30;
 const MIN_MAX_AGE_DAYS = 0;
 const MAX_MAX_AGE_DAYS = 3650;
+const DEFAULT_HIDE_SHORTS_PANEL = false;
+const DEFAULT_HIDE_PODCAST_LINKS = false;
 
 const VIDEO_RENDERER_SELECTOR = [
   "ytd-rich-item-renderer",
   "ytd-video-renderer",
   "ytd-grid-video-renderer",
   "ytd-compact-video-renderer",
-  "ytd-reel-item-renderer"
+  "ytd-reel-item-renderer",
+  "ytd-rich-grid-slim-media",
+  "ytm-shorts-lockup-view-model",
+  "yt-lockup-view-model"
+].join(",");
+
+const SHORTS_SHELF_SELECTOR = [
+  "ytd-rich-shelf-renderer[is-shorts]",
+  "ytd-reel-shelf-renderer"
+].join(",");
+
+const PODCAST_LINK_LABELS = [
+  "view full podcast",
+  "personalised mix for you"
+];
+
+const ALWAYS_HIDDEN_LABELS = [
+  "playables",
+  "view full playlist"
+];
+
+const LABELLED_CONTENT_SELECTOR = [
+  "ytd-rich-shelf-renderer",
+  "ytd-horizontal-card-list-renderer",
+  "ytd-rich-item-renderer",
+  "ytd-playlist-renderer",
+  "ytd-grid-playlist-renderer",
+  "ytd-compact-playlist-renderer",
+  "ytd-radio-renderer",
+  "ytd-grid-radio-renderer",
+  "ytd-compact-radio-renderer",
+  "ytd-game-card-renderer",
+  "yt-lockup-view-model"
 ].join(",");
 
 let maxAgeDays = DEFAULT_MAX_AGE_DAYS;
+let hideShortsPanel = DEFAULT_HIDE_SHORTS_PANEL;
+let hidePodcastLinks = DEFAULT_HIDE_PODCAST_LINKS;
 let scanTimer = null;
 
 function isFeedPage() {
@@ -29,10 +65,14 @@ function clampMaxAgeDays(value) {
 
 async function readSettings() {
   const settings = await browser.storage.sync.get({
-    maxAgeDays: DEFAULT_MAX_AGE_DAYS
+    maxAgeDays: DEFAULT_MAX_AGE_DAYS,
+    hideShortsPanel: DEFAULT_HIDE_SHORTS_PANEL,
+    hidePodcastLinks: DEFAULT_HIDE_PODCAST_LINKS
   });
 
   maxAgeDays = clampMaxAgeDays(settings.maxAgeDays);
+  hideShortsPanel = Boolean(settings.hideShortsPanel);
+  hidePodcastLinks = Boolean(settings.hidePodcastLinks);
 }
 
 function daysFromRelativeAge(text) {
@@ -88,29 +128,101 @@ function getCandidateText(renderer) {
     "span"
   ].join(","));
 
-  return Array.from(metadataNodes)
-    .map((node) => node.textContent || "")
-    .join(" ");
+  const metadataText = Array.from(metadataNodes)
+    .flatMap((node) => [
+      node.textContent || "",
+      node.getAttribute("aria-label") || "",
+      node.getAttribute("title") || ""
+    ]);
+
+  const labelledText = Array.from(renderer.querySelectorAll("[aria-label], [title]"))
+    .flatMap((node) => [
+      node.getAttribute("aria-label") || "",
+      node.getAttribute("title") || ""
+    ]);
+
+  return [
+    renderer.textContent || "",
+    renderer.getAttribute("aria-label") || "",
+    renderer.getAttribute("title") || "",
+    ...metadataText,
+    ...labelledText
+  ].join(" ");
 }
 
 function shouldHideRenderer(renderer) {
   const ageDays = daysFromRelativeAge(getCandidateText(renderer));
 
-  return ageDays !== null && ageDays > maxAgeDays;
+  return (isShortRenderer(renderer) && (ageDays === null || ageDays > maxAgeDays)) ||
+    (ageDays !== null && ageDays > maxAgeDays) ||
+    (hidePodcastLinks && isPodcastLink(renderer));
+}
+
+function isShortRenderer(renderer) {
+  return renderer.matches([
+    "ytd-reel-item-renderer",
+    "ytd-rich-grid-slim-media",
+    "ytm-shorts-lockup-view-model"
+  ].join(",")) ||
+    Boolean(renderer.closest(SHORTS_SHELF_SELECTOR)) ||
+    Boolean(renderer.querySelector("a[href^='/shorts/']"));
+}
+
+function isPodcastLink(renderer) {
+  const text = (renderer.textContent || "").toLowerCase();
+
+  return PODCAST_LINK_LABELS.some((label) => text.includes(label));
+}
+
+function getShortsPanel(shelf) {
+  return shelf.closest("ytd-rich-section-renderer, ytd-item-section-renderer") || shelf;
+}
+
+function hasAlwaysHiddenLabel(element) {
+  const descendantLabels = Array.from(element.querySelectorAll("[aria-label], [title]"))
+    .flatMap((node) => [
+      node.getAttribute("aria-label") || "",
+      node.getAttribute("title") || ""
+    ]);
+  const text = [
+    element.textContent || "",
+    element.getAttribute("aria-label") || "",
+    element.getAttribute("title") || "",
+    ...descendantLabels
+  ].join(" ").toLowerCase().replace(/\s+/g, " ").trim();
+
+  return ALWAYS_HIDDEN_LABELS.some((label) => text.includes(label));
+}
+
+function getLabelledContentContainer(element) {
+  if (element.matches("ytd-rich-shelf-renderer, ytd-horizontal-card-list-renderer")) {
+    return element.closest("ytd-rich-section-renderer, ytd-item-section-renderer") || element;
+  }
+
+  return element;
 }
 
 function setRendererVisibility(renderer) {
-  const shouldHide = shouldHideRenderer(renderer);
+  setHiddenForReason(renderer, "ryfHiddenRenderer", shouldHideRenderer(renderer));
+}
 
+function setHiddenForReason(element, reason, shouldHide) {
   if (shouldHide) {
-    renderer.dataset.ryfHidden = "true";
-    renderer.style.display = "none";
-    return;
+    element.dataset[reason] = "true";
+  } else {
+    delete element.dataset[reason];
   }
 
-  if (renderer.dataset.ryfHidden === "true") {
-    delete renderer.dataset.ryfHidden;
-    renderer.style.display = "";
+  const isHidden = element.dataset.ryfHiddenRenderer === "true" ||
+    element.dataset.ryfHiddenShortsPanel === "true" ||
+    element.dataset.ryfHiddenLabel === "true";
+
+  if (isHidden) {
+    element.dataset.ryfHidden = "true";
+    element.style.display = "none";
+  } else {
+    delete element.dataset.ryfHidden;
+    element.style.display = "";
   }
 }
 
@@ -118,14 +230,36 @@ function scanFeed() {
   scanTimer = null;
 
   if (!isFeedPage()) {
-    document.querySelectorAll("[data-ryf-hidden='true']").forEach((renderer) => {
-      delete renderer.dataset.ryfHidden;
-      renderer.style.display = "";
-    });
+    restoreHiddenElements();
     return;
   }
 
   document.querySelectorAll(VIDEO_RENDERER_SELECTOR).forEach(setRendererVisibility);
+  document.querySelectorAll(SHORTS_SHELF_SELECTOR).forEach((shelf) => {
+    const panel = getShortsPanel(shelf);
+    setHiddenForReason(panel, "ryfHiddenShortsPanel", hideShortsPanel);
+  });
+  document.querySelectorAll("[data-ryf-hidden-label='true']").forEach((element) => {
+    setHiddenForReason(element, "ryfHiddenLabel", false);
+  });
+  document.querySelectorAll(LABELLED_CONTENT_SELECTOR).forEach((element) => {
+    if (!hasAlwaysHiddenLabel(element)) {
+      return;
+    }
+
+    const container = getLabelledContentContainer(element);
+    setHiddenForReason(container, "ryfHiddenLabel", true);
+  });
+}
+
+function restoreHiddenElements() {
+  document.querySelectorAll("[data-ryf-hidden='true']").forEach((element) => {
+    delete element.dataset.ryfHidden;
+    delete element.dataset.ryfHiddenRenderer;
+    delete element.dataset.ryfHiddenShortsPanel;
+    delete element.dataset.ryfHiddenLabel;
+    element.style.display = "";
+  });
 }
 
 function scheduleScan() {
@@ -147,11 +281,19 @@ async function init() {
   });
 
   browser.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== "sync" || !changes.maxAgeDays) {
+    if (areaName !== "sync") {
       return;
     }
 
-    maxAgeDays = clampMaxAgeDays(changes.maxAgeDays.newValue);
+    if (changes.maxAgeDays) {
+      maxAgeDays = clampMaxAgeDays(changes.maxAgeDays.newValue);
+    }
+    if (changes.hideShortsPanel) {
+      hideShortsPanel = Boolean(changes.hideShortsPanel.newValue);
+    }
+    if (changes.hidePodcastLinks) {
+      hidePodcastLinks = Boolean(changes.hidePodcastLinks.newValue);
+    }
     scanFeed();
   });
 }

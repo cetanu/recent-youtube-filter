@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Recent YouTube Filter",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Removes YouTube feed videos that were posted more than a configured number of days ago.",
   "permissions": [
     "storage",
