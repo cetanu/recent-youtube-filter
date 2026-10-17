@@ -15,6 +15,7 @@ age and optional feed filters.
 - Default threshold: `30` days.
 - A value of `0` keeps videos from today and hides anything marked as at least `1 day ago`.
 - The extension watches YouTube's dynamic page updates and re-applies filtering as new feed items load.
+- Click the × at the top right of a video to permanently hide it from feeds. Hidden video IDs are saved in the extension's local storage on this browser and remain hidden after reloads and browser restarts.
 - Regular videos are only hidden when the extension can parse relative age text like `2 days ago`, `3 weeks ago`, `1 month ago`, or `Streamed 1 year ago`.
 - Shorts use the same age limit. A Short is hidden when YouTube does not expose an age that the extension can parse.
 - Playables and items labelled `View full playlist` are always hidden.

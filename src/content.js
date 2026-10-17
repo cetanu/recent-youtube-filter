@@ -3,6 +3,7 @@ const MIN_MAX_AGE_DAYS = 0;
 const MAX_MAX_AGE_DAYS = 3650;
 const DEFAULT_HIDE_SHORTS_PANEL = false;
 const DEFAULT_HIDE_PODCAST_LINKS = false;
+const HIDDEN_VIDEO_KEY_PREFIX = "hiddenVideo:";
 
 const VIDEO_RENDERER_SELECTOR = [
   "ytd-rich-item-renderer",
@@ -47,6 +48,7 @@ const LABELLED_CONTENT_SELECTOR = [
 let maxAgeDays = DEFAULT_MAX_AGE_DAYS;
 let hideShortsPanel = DEFAULT_HIDE_SHORTS_PANEL;
 let hidePodcastLinks = DEFAULT_HIDE_PODCAST_LINKS;
+const hiddenVideoIds = new Set();
 let scanTimer = null;
 
 function isFeedPage() {
@@ -151,11 +153,77 @@ function getCandidateText(renderer) {
 }
 
 function shouldHideRenderer(renderer) {
+  if (hiddenVideoIds.has(getVideoId(renderer))) {
+    return true;
+  }
+
   const ageDays = daysFromRelativeAge(getCandidateText(renderer));
 
   return (isShortRenderer(renderer) && (ageDays === null || ageDays > maxAgeDays)) ||
     (ageDays !== null && ageDays > maxAgeDays) ||
     (hidePodcastLinks && isPodcastLink(renderer));
+}
+
+function getVideoId(renderer) {
+  for (const link of renderer.querySelectorAll("a[href]")) {
+    const url = new URL(link.href, window.location.origin);
+    if (url.origin !== window.location.origin) {
+      continue;
+    }
+
+    if (url.pathname === "/watch" && url.searchParams.get("v")) {
+      return url.searchParams.get("v");
+    }
+
+    const match = url.pathname.match(/^\/(?:shorts|live)\/([^/]+)\/?$/);
+    if (match) {
+      return match[1];
+    }
+  }
+
+  return null;
+}
+
+function updateDismissButton(renderer) {
+  const button = renderer.querySelector(":scope > .ryf-dismiss-video");
+  if (!getVideoId(renderer) || renderer.closest("[data-ryf-hidden='true']") ||
+      renderer.parentElement?.closest(VIDEO_RENDERER_SELECTOR)) {
+    button?.remove();
+    renderer.classList.remove("ryf-dismissible-video");
+    return;
+  }
+
+  if (button) {
+    return;
+  }
+
+  const dismissButton = document.createElement("button");
+  dismissButton.type = "button";
+  dismissButton.className = "ryf-dismiss-video";
+  dismissButton.textContent = "×";
+  dismissButton.title = "Hide this video permanently";
+  dismissButton.setAttribute("aria-label", "Hide this video permanently");
+  dismissButton.addEventListener("click", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const videoId = getVideoId(renderer);
+    if (!videoId) {
+      return;
+    }
+
+    dismissButton.disabled = true;
+    try {
+      await browser.storage.local.set({ [`${HIDDEN_VIDEO_KEY_PREFIX}${videoId}`]: true });
+      hiddenVideoIds.add(videoId);
+      scanFeed();
+    } catch (error) {
+      dismissButton.disabled = false;
+      dismissButton.title = "Could not save hidden video. Click to retry.";
+      console.error("Recent YouTube Filter failed to hide video", error);
+    }
+  });
+  renderer.classList.add("ryf-dismissible-video");
+  renderer.append(dismissButton);
 }
 
 function isShortRenderer(renderer) {
@@ -250,9 +318,14 @@ function scanFeed() {
     const container = getLabelledContentContainer(element);
     setHiddenForReason(container, "ryfHiddenLabel", true);
   });
+  document.querySelectorAll(VIDEO_RENDERER_SELECTOR).forEach(updateDismissButton);
 }
 
 function restoreHiddenElements() {
+  document.querySelectorAll(".ryf-dismiss-video").forEach((button) => button.remove());
+  document.querySelectorAll(".ryf-dismissible-video").forEach((element) => {
+    element.classList.remove("ryf-dismissible-video");
+  });
   document.querySelectorAll("[data-ryf-hidden='true']").forEach((element) => {
     delete element.dataset.ryfHidden;
     delete element.dataset.ryfHiddenRenderer;
@@ -272,15 +345,39 @@ function scheduleScan() {
 
 async function init() {
   await readSettings();
+  const localSettings = await browser.storage.local.get(null);
+  for (const [key, value] of Object.entries(localSettings)) {
+    if (key.startsWith(HIDDEN_VIDEO_KEY_PREFIX) && value === true) {
+      hiddenVideoIds.add(key.slice(HIDDEN_VIDEO_KEY_PREFIX.length));
+    }
+  }
   scanFeed();
 
   const observer = new MutationObserver(scheduleScan);
   observer.observe(document.documentElement, {
     childList: true,
-    subtree: true
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["href"]
   });
+  document.addEventListener("yt-navigate-finish", scheduleScan);
 
   browser.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName === "local") {
+      for (const [key, change] of Object.entries(changes)) {
+        if (key.startsWith(HIDDEN_VIDEO_KEY_PREFIX)) {
+          const videoId = key.slice(HIDDEN_VIDEO_KEY_PREFIX.length);
+          if (change.newValue === true) {
+            hiddenVideoIds.add(videoId);
+          } else {
+            hiddenVideoIds.delete(videoId);
+          }
+        }
+      }
+      scanFeed();
+      return;
+    }
+
     if (areaName !== "sync") {
       return;
     }
